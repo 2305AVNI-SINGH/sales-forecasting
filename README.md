@@ -62,8 +62,6 @@ The tuned LightGBM has about 27% lower MAE than Linear Regression on this window
 | 2015-06-12 to 2015-07-31 | 614.9 |
 | **Mean** | **752.4** |
 
-![Actual vs predicted total sales](images/actual_vs_pred_total.png)
-![Store 1: actual vs predicted](images/store1_actual_vs_pred.png)
 
 ## Key findings
 
@@ -73,7 +71,7 @@ The tuned LightGBM has about 27% lower MAE than Linear Regression on this window
 - **Promo cycle:** a store's promo flag matches the one from 14 days ago 85% of the time but the one from 7 days ago only 35% of the time. This is why `lag_14` is the most important feature and "same as last week" is a poor baseline.
 - **Feature importance (gain):** `lag_14`, `lag_28`, `roll_mean_28` and `Promo` contribute most. Store-level attributes add little because the lag features already capture each store's sales level.
 
-![Feature importance (gain)](images/feature_importance_gain.png)
+
 
 ## Limitations
 
@@ -100,7 +98,7 @@ streamlit run app.py
 
 Run the training step first, because the dashboard loads the saved model from `outputs/`.
 
-![Dashboard screenshot](images/dashboard.png)
+
 
 ## Project structure
 
