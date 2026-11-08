@@ -1,0 +1,395 @@
+# Project Documentation: Sales Forecasting with LightGBM
+
+**Author:** Avni Singh
+**Dataset:** Rossmann Store Sales (Kaggle)
+**Task:** 7-day-ahead daily sales forecasting for 1,115 stores
+
+This document explains how the project is organised, how the code works, how to reproduce the results, and what the main design decisions were. For a short summary and the results table, see [README.md](README.md).
+
+---
+
+## Table of contents
+
+1. [Project overview](#1-project-overview)
+2. [Repository structure](#2-repository-structure)
+3. [Setup and installation](#3-setup-and-installation)
+4. [Data description](#4-data-description)
+5. [Pipeline overview](#5-pipeline-overview)
+6. [Code reference](#6-code-reference)
+7. [Feature dictionary](#7-feature-dictionary)
+8. [Modelling and evaluation](#8-modelling-and-evaluation)
+9. [Results](#9-results)
+10. [Dashboard](#10-dashboard)
+11. [Notebook](#11-notebook)
+12. [Assumptions and limitations](#12-assumptions-and-limitations)
+13. [Troubleshooting](#13-troubleshooting)
+14. [Future improvements](#14-future-improvements)
+15. [Glossary](#15-glossary)
+
+---
+
+## 1. Project overview
+
+Retail stores need to know how much they will sell in the coming days to plan staffing and stock. This project predicts the **daily sales of each Rossmann store, 7 days ahead**, using the store's past sales, the calendar, and information that is known in advance, such as promotions and holidays.
+
+The project covers the full workflow of a small machine learning project:
+
+- Data loading and cleaning
+- Exploratory data analysis (EDA) and visualisation
+- Feature engineering for time series (lag and rolling features)
+- Baseline models, Linear Regression and LightGBM
+- Hyperparameter tuning and time-series cross-validation
+- An interactive Streamlit dashboard
+
+## 2. Repository structure
+
+```
+sales-forecasting/
+├── README.md              Short overview, results and key findings
+├── DOCUMENTATION.md       This document
+├── app.py                 Streamlit dashboard
+├── requirements.txt       Python dependencies
+├── .gitignore             Files excluded from Git
+├── data/                  train.csv and store.csv (download from Kaggle)
+├── images/                Plots used in the README
+├── notebooks/
+│   └── sales_forecasting.ipynb   EDA, experiments, tuning, cross-validation
+├── src/
+│   ├── features.py        Loading, cleaning and feature engineering
+│   └── train.py           Training and evaluation script
+└── outputs/               Created by train.py (results.csv, lgbm_final.pkl)
+```
+
+| Path | Purpose |
+|---|---|
+| `src/features.py` | All data preparation code, shared by `train.py` and `app.py` |
+| `src/train.py` | Trains baselines, Linear Regression and LightGBM, prints the comparison table, saves the model |
+| `app.py` | Loads the saved model and shows predictions in a browser |
+| `notebooks/sales_forecasting.ipynb` | The full exploratory workflow with plots and outputs |
+| `outputs/` | Generated files. The model file `*.pkl` is excluded from Git |
+
+## 3. Setup and installation
+
+**Requirements:** Python 3.9 or newer.
+
+1. Get the code:
+   ```bash
+   git clone <your-repo-url>
+   cd sales-forecasting
+   ```
+2. (Optional) Create a virtual environment:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate        # Windows: venv\Scripts\activate
+   ```
+3. Install the dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Download the data from the [Kaggle competition page](https://www.kaggle.com/c/rossmann-store-sales) (you need a free account and must accept the competition rules). Put `train.csv` and `store.csv` in a folder named `data/`.
+
+**Dependencies:** pandas, numpy, scikit-learn, lightgbm, matplotlib, joblib, streamlit.
+
+## 4. Data description
+
+### `train.csv` (about 1 million rows, 2013-01-01 to 2015-07-31)
+
+| Column | Description |
+|---|---|
+| `Store` | Store ID (1 to 1,115) |
+| `DayOfWeek` | Day of the week (1 = Monday, 7 = Sunday) |
+| `Date` | Calendar date |
+| `Sales` | Daily turnover. **This is the target.** |
+| `Customers` | Number of customers that day. **Not used as a feature** (see section 12) |
+| `Open` | 1 if the store was open, 0 if closed |
+| `Promo` | 1 if the store ran a promotion that day |
+| `StateHoliday` | `0` = none, `a` = public holiday, `b` = Easter, `c` = Christmas |
+| `SchoolHoliday` | 1 if schools were closed that day |
+
+### `store.csv` (one row per store)
+
+| Column | Description |
+|---|---|
+| `StoreType` | Store model, one of `a`, `b`, `c`, `d` |
+| `Assortment` | Product range level: `a` basic, `b` extra, `c` extended |
+| `CompetitionDistance` | Distance in metres to the nearest competitor |
+| `CompetitionOpenSinceMonth/Year` | When the nearest competitor opened |
+| `Promo2` | 1 if the store takes part in the continuing Promo2 programme |
+| `Promo2SinceWeek/Year` | When the store joined Promo2 |
+| `PromoInterval` | Months in which Promo2 restarts |
+
+### Data quality notes
+
+- **Closed days:** about 172,000 rows have `Open = 0`. Sales are always 0 on these days, so they are excluded from modelling.
+- **Missing values:** `CompetitionDistance` has 2,642 missing values (filled with the median). The competition-date and Promo2 columns are blank for stores without that feature, so they are filled with 0 (or "None" for `PromoInterval`), which is a meaningful value and not an error.
+- **Final modelling table:** after removing closed days and the first 28 days of each store (which have no lag history), about 809,000 rows remain: 767,923 for training and 41,396 for validation.
+
+## 5. Pipeline overview
+
+```
+train.csv + store.csv
+        │
+   load_data()       merge the two files, sort by store and date
+        │
+     clean()         fill missing values
+        │
+  add_features()     calendar, lag and rolling features, encode text columns
+        │
+ make_model_df()     keep open days with full lag history
+        │
+  split by date      train: before 2015-06-19   validation: from 2015-06-19
+        │
+  train models       baselines, Linear Regression, LightGBM (log target)
+        │
+  evaluate           MAE, RMSE, MAPE
+        │
+  save               outputs/results.csv, outputs/lgbm_final.pkl
+```
+
+## 6. Code reference
+
+### `src/features.py`
+
+| Name | Description |
+|---|---|
+| `FEATURES` | The list of 23 column names used as model inputs |
+| `LAGS` | `[7, 14, 28]`, the lag sizes in days |
+| `load_data(data_dir)` | Reads `train.csv` and `store.csv` from `data_dir`, merges them on `Store`, sorts by store and date, and returns one DataFrame |
+| `clean(df)` | Fills missing values (see section 4). Returns a copy |
+| `add_features(df)` | Adds calendar, lag and rolling features and converts text columns to integer codes. Returns a copy |
+| `make_model_df(df)` | Keeps rows where `Open == 1` and all lag and rolling features exist |
+
+### `src/train.py`
+
+| Name | Description |
+|---|---|
+| `BEST_PARAMS` | The tuned LightGBM settings: 800 trees, learning rate 0.05, 127 leaves |
+| `evaluate(name, y_true, y_pred)` | Computes MAE, RMSE and MAPE, prints them, and stores them in the `results` dictionary. MAPE ignores rows where actual sales are 0 |
+| `main(data_dir, split_date, out_dir)` | Runs the whole pipeline and saves the outputs |
+
+**Command-line options**
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--data_dir` | `data` | Folder with `train.csv` and `store.csv` |
+| `--split_date` | `2015-06-19` | First date of the validation set |
+| `--out_dir` | `outputs` | Where to save `results.csv` and `lgbm_final.pkl` |
+
+**Example**
+```bash
+python src/train.py --data_dir data --split_date 2015-06-19 --out_dir outputs
+```
+
+### `app.py`
+
+A Streamlit app that:
+1. Loads the saved model from `outputs/lgbm_final.pkl`.
+2. Rebuilds the features from `data/` and predicts the validation window.
+3. Lets you choose a store in the sidebar and shows that store's MAE and MAPE.
+4. Plots actual vs predicted sales for that store and for all stores combined.
+5. Shows the model comparison table from `outputs/results.csv`.
+
+Predictions are cached, so changing the selected store is fast after the first load.
+
+## 7. Feature dictionary
+
+All 23 model inputs, grouped by type.
+
+**Store and promotion information (from the data)**
+
+| Feature | Notes |
+|---|---|
+| `Store` | Store ID |
+| `Promo` | Promotion running on the target day |
+| `StateHoliday`, `SchoolHoliday` | Holiday flags (`StateHoliday` is label-encoded) |
+| `StoreType`, `Assortment`, `PromoInterval` | Label-encoded categories |
+| `CompetitionDistance` | Distance to nearest competitor |
+| `CompetitionOpenSinceMonth`, `CompetitionOpenSinceYear` | 0 if unknown |
+| `Promo2`, `Promo2SinceWeek`, `Promo2SinceYear` | Promo2 programme details |
+
+**Calendar features**
+
+| Feature | Notes |
+|---|---|
+| `DayOfWeek` | 1 to 7 |
+| `Year`, `Month`, `Day` | From the date |
+| `WeekOfYear` | ISO week number |
+
+**History features (built from past sales of the same store)**
+
+| Feature | Definition |
+|---|---|
+| `lag_7` | Sales 7 days earlier |
+| `lag_14` | Sales 14 days earlier |
+| `lag_28` | Sales 28 days earlier |
+| `roll_mean_7` | Average of the 7 days ending 7 days before the target day |
+| `roll_mean_28` | Average of the 28 days ending 7 days before the target day |
+
+The rolling means are shifted by 7 days, so every history feature is at least 7 days old. This is what makes the task a genuine 7-day-ahead forecast and prevents leakage.
+
+**Encoding:** text columns are converted with pandas category codes. The codes are consistent within a run, because the same data is always encoded together.
+
+## 8. Modelling and evaluation
+
+### Validation strategy
+
+The data is split **by time**, never randomly:
+- **Train:** all rows before 2015-06-19
+- **Validation:** 2015-06-19 to 2015-07-31 (about 6 weeks)
+
+A random split would let the model see future days during training and would give unrealistically good scores.
+
+**Cross-validation:** the notebook also runs 3 expanding-window folds. Each fold trains on everything before its start date and validates on the next period:
+
+| Fold | Validation period |
+|---|---|
+| 1 | 2015-03-20 to 2015-05-01 |
+| 2 | 2015-05-01 to 2015-06-12 |
+| 3 | 2015-06-12 to 2015-07-31 |
+
+### Metrics
+
+| Metric | Meaning |
+|---|---|
+| **MAE** | Mean absolute error: the average miss in sales units. Easy to interpret |
+| **RMSE** | Root mean squared error: like MAE but punishes large misses more |
+| **MAPE %** | Mean absolute percentage error: the average miss as a percentage of actual sales (rows with 0 actual sales are skipped) |
+
+### Models
+
+| Model | Description |
+|---|---|
+| Last week (`lag_7`) | Predict the same sales as 7 days ago |
+| Two weeks ago (`lag_14`) | Predict the same sales as 14 days ago |
+| Moving average (28d) | Predict the 28-day rolling mean |
+| Linear Regression | Linear model on the same features |
+| LightGBM | Gradient-boosted decision trees on the raw sales target |
+| LightGBM (log target) | Trained on `log(1 + Sales)`, then predictions are converted back with `expm1`. Reduces the effect of very large sales values |
+| LightGBM (tuned, log target) | Log-target model with the best settings from tuning (the final model) |
+
+### Hyperparameter tuning
+
+Three configurations were compared on the validation window:
+
+| n_estimators | learning_rate | num_leaves | Validation MAE |
+|---|---|---|---|
+| 1000 | 0.03 | 63 | 621.1 |
+| **800** | **0.05** | **127** | **603.0** |
+| 800 | 0.05 | 31 | 637.0 |
+
+Fixed settings for all LightGBM models: `subsample=0.8`, `subsample_freq=1`, `colsample_bytree=0.8`, `random_state=42`.
+
+## 9. Results
+
+Validation window: 2015-06-19 to 2015-07-31.
+
+| Model | MAE | RMSE | MAPE % |
+|---|---|---|---|
+| **LightGBM (tuned, log target)** | **603.0** | **894.8** | **9.03** |
+| LightGBM (log target) | 610.7 | 890.5 | 9.19 |
+| LightGBM | 620.1 | 900.4 | 9.45 |
+| Linear Regression | 824.1 | 1139.3 | 12.82 |
+| Two weeks ago (`lag_14`) | 813.0 | 1183.2 | 11.77 |
+| Moving average (28 days) | 1489.4 | 2106.2 | 20.44 |
+| Last week (`lag_7`) | 2174.7 | 2799.2 | 31.80 |
+
+**Cross-validation MAE (tuned model):** 899.0, 743.5 and 614.9 across the three folds, a **mean of 752.4**.
+
+### How to read the results
+
+- The final model has about 27% lower MAE than Linear Regression and far lower error than the naive baselines.
+- The MAE of 603 is measured on a window that was also used to choose the hyperparameters. The cross-validation mean of 752.4 is the more reliable estimate of future performance.
+- Early folds have higher error because the model has less training data there.
+- **Why `lag_7` is a poor baseline:** a store's promo flag matches the one from 14 days ago 85% of the time, but the one from 7 days ago only 35% of the time. Stores alternate promotion weeks, so the same weekday two weeks ago is a better guide. This is also why `lag_14` is the most important feature (by gain), followed by `lag_28`, `roll_mean_28` and `Promo`.
+
+### Exploratory findings
+
+- Sales drop sharply each Sunday because most stores close.
+- Average sales peak in December, with a smaller rise in spring and a dip from August to October.
+- Average sales are about 38% higher on promo days.
+
+## 10. Dashboard
+
+**Start it:**
+```bash
+python src/train.py --data_dir data     # creates outputs/lgbm_final.pkl and results.csv
+streamlit run app.py
+```
+Open the address shown in the terminal (usually `http://localhost:8501`).
+
+**What you see:**
+- A sidebar to select a store
+- Store ID, MAE and MAPE for the selected store
+- A line chart of actual vs predicted sales for that store
+- A line chart of total actual vs predicted sales across all stores
+- The model comparison table
+
+The dashboard needs `data/` and `outputs/lgbm_final.pkl` to exist. If either is missing, it shows an error asking you to run the training step first.
+
+## 11. Notebook
+
+`notebooks/sales_forecasting.ipynb` contains the full workflow with outputs, in this order:
+
+1. Mount Google Drive and load data
+2. Missing-value check and cleaning
+3. EDA: total sales, weekday pattern, promo effect, monthly pattern, holidays
+4. Feature engineering and the time-based split
+5. Baselines, Linear Regression, LightGBM
+6. Feature importance (split count and gain)
+7. Actual vs predicted plots
+8. Log-target model, fairer baseline comparison
+9. Hyperparameter tuning and cross-validation
+10. Final model, results table, saved outputs
+11. Promo-cycle analysis and saving the plots
+
+It was written in Google Colab, so the first cell mounts Google Drive and the paths point to Drive. To run it elsewhere, remove the mount cell and change `DATA_DIR` to your local `data/` folder.
+
+## 12. Assumptions and limitations
+
+**Assumptions**
+- **Promotions, holidays and opening days are known in advance** for the day being predicted. Retailers normally plan these, so this is realistic, but a forecast made without that schedule would need those features predicted first.
+- **`Customers` is deliberately excluded.** It is in the data but is only known after the day ends, so using it would be data leakage and would make the results look better than they could be in practice.
+- Closed days are not forecast. The model only predicts open days.
+
+**Limitations**
+- The model slightly under-predicts some sales peaks and over-predicts some dips, and it over-predicted total sales around 1 to 4 July 2015.
+- The forecast horizon is fixed at 7 days. A longer horizon would need features that are at least that old.
+- Only a single model family (gradient-boosted trees) was tuned, and the search was small (3 configurations).
+- The headline validation score is slightly optimistic because tuning used the same window (see section 9).
+- The dataset ends in July 2015, so patterns after that date, including any change in shopping behaviour, are not captured.
+
+## 13. Troubleshooting
+
+| Problem | Cause and fix |
+|---|---|
+| `ModuleNotFoundError: No module named 'features'` | The file must be named `features.py` (with an s) and located in `src/` |
+| `FileNotFoundError: ... train.csv` | Put `train.csv` and `store.csv` in `data/`, or pass `--data_dir` with the right folder |
+| Dashboard says "Model or data not found" | Run `python src/train.py --data_dir data` first, from the project root folder |
+| `ModuleNotFoundError: No module named 'lightgbm'` or `streamlit` | Run `pip install -r requirements.txt` |
+| Training is slow | The dataset has about 1 million rows. Reduce `n_estimators` in `BEST_PARAMS` for a quick test |
+| Images do not show in the README | File names are case-sensitive and must match the README paths exactly (see the `images/` folder) |
+| Streamlit does not open in Google Colab | Colab cannot serve Streamlit directly. Run the dashboard on a local computer, or use the plots from the notebook |
+
+## 14. Future improvements
+
+- Add external data such as weather and regional events
+- Try other models (XGBoost, CatBoost) and a PyTorch LSTM for comparison
+- Search hyperparameters more widely with a time-series-aware search
+- Forecast several horizons (1 to 14 days) and compare accuracy
+- Report prediction intervals, not only point forecasts
+- Deploy the dashboard publicly (for example Streamlit Community Cloud)
+- Add automated tests for the feature-engineering functions
+
+## 15. Glossary
+
+| Term | Meaning |
+|---|---|
+| **Lag feature** | A past value of the target, for example sales 14 days ago |
+| **Rolling mean** | The average over a moving window of recent days |
+| **Data leakage** | Using information in training that would not be available when making real predictions |
+| **Time-based split** | Training on the past and validating on the future, never mixing them |
+| **Cross-validation** | Repeating the train/validate procedure on several time periods to check the result is stable |
+| **LightGBM** | A fast gradient-boosted decision tree library |
+| **Log target** | Training on `log(1 + sales)` to reduce the influence of very large values |
+| **MAE / RMSE / MAPE** | Error metrics, defined in section 8 |
+| **Baseline** | A simple model that any real model must beat |
