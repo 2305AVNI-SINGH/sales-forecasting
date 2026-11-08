@@ -1,0 +1,15 @@
+# Data (download from Kaggle, see README)
+data/
+
+# Models and outputs
+*.pkl
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# OS
+.DS_Store
