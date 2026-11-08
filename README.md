@@ -89,3 +89,9 @@ sales-forecasting/
 
 Python, Pandas, NumPy, scikit-learn, LightGBM, Matplotlib, Google Colab
 # sales-forecasting
+## Internship Details
+- **Intern ID:** <CIS69>
+- **Full Name:** Avni Singh
+- **No. of Weeks:** <1 Week>
+- **Project Name:** Sales Forecasting with LightGBM (Rossmann Store Sales)
+- **Project Scope:** 7-day-ahead daily sales forecasting for 1,115 stores, covering data cleaning, EDA and visualization, feature engineering, model comparison and a forecast dashboard.
