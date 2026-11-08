@@ -16,8 +16,8 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 from features import FEATURES, add_features, clean, load_data, make_model_df
 
-# Replace with the best config found during tuning in the notebook
-BEST_PARAMS = {"n_estimators": 1000, "learning_rate": 0.03, "num_leaves": 63}
+# Best config from the tuning step in the notebook (validation MAE 603.0)
+BEST_PARAMS = {"n_estimators": 800, "learning_rate": 0.05, "num_leaves": 127}
 
 results = {}
 
