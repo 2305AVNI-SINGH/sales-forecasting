@@ -1,5 +1,15 @@
 # Sales Forecasting with LightGBM (Rossmann Store Sales)
 
+## Internship Details
+
+- **Intern ID:** CIS69
+- **Full Name:** Avni Singh
+- **No. of Weeks:** 1 week
+- **Project Name:** Sales Forecasting with LightGBM (Rossmann Store Sales)
+- **Project Scope:** 7-day-ahead daily sales forecasting for 1,115 stores, covering data cleaning, EDA and visualization, feature engineering, model comparison and an interactive forecast dashboard.
+
+## Overview
+
 A 7-day-ahead daily sales forecast for 1,115 Rossmann stores, built with calendar, lag and rolling-window features and a LightGBM model. The project compares the model against simple baselines and a Linear Regression using a strict time-based validation.
 
 ## Problem
@@ -39,9 +49,18 @@ Validation window: 2015-06-19 to 2015-07-31 (open days only).
 | Linear Regression | 824.1 | 1139.3 | 12.82 |
 | Two weeks ago (lag_14) | 813.0 | 1183.2 | 11.77 |
 | Moving average (28 days) | 1489.4 | 2106.2 | 20.44 |
-| Last week (lag_7) | 2178.0 | 2809.1 | 31.82 |
+| Last week (lag_7) | 2174.7 | 2799.2 | 31.80 |
 
-The tuned LightGBM has about 27% lower MAE than Linear Regression. Time-series cross-validation (3 folds): **[add mean CV MAE here]**.
+The tuned LightGBM has about 27% lower MAE than Linear Regression on this window. The untuned LightGBM rows are from the notebook; `src/train.py` reproduces the baselines, Linear Regression and the tuned model.
+
+**Time-series cross-validation (3 expanding-window folds, tuned LightGBM):**
+
+| Validation period | MAE |
+|---|---|
+| 2015-03-20 to 2015-05-01 | 899.0 |
+| 2015-05-01 to 2015-06-12 | 743.5 |
+| 2015-06-12 to 2015-07-31 | 614.9 |
+| **Mean** | **752.4** |
 
 ![Actual vs predicted total sales](images/actual_vs_pred_total.png)
 ![Store 1: actual vs predicted](images/store1_actual_vs_pred.png)
@@ -59,7 +78,7 @@ The tuned LightGBM has about 27% lower MAE than Linear Regression. Time-series c
 ## Limitations
 
 - The model under-predicts some sales peaks and over-predicts some dips (see the Store 1 plot), and it over-predicted total sales in early July 2015.
-- The validation set is a single 6-week window, and hyperparameters were tuned on it, so the reported score is slightly optimistic.
+- The headline score (MAE 603) comes from one 6-week window that was also used for tuning, so it is optimistic. The cross-validation mean (MAE 752.4) is the more reliable estimate, and the error is higher in earlier folds that have less training data.
 - Forecast horizon is fixed at 7 days. Longer horizons need different features.
 
 ## How to run
@@ -71,11 +90,24 @@ python src/train.py --data_dir data
 
 This trains the models, prints the comparison table, and saves `outputs/results.csv` and `outputs/lgbm_final.pkl`.
 
+## Dashboard
+
+An interactive Streamlit dashboard shows actual vs predicted sales for any store, the total sales forecast across all stores, and the model comparison table.
+
+```bash
+streamlit run app.py
+```
+
+Run the training step first, because the dashboard loads the saved model from `outputs/`.
+
+![Dashboard screenshot](images/dashboard.png)
+
 ## Project structure
 
 ```
 sales-forecasting/
 ├── data/            (not tracked, download from Kaggle)
+├── app.py           (Streamlit dashboard)
 ├── images/          (plots used in this README)
 ├── notebooks/       (EDA and experiments)
 ├── src/
@@ -88,10 +120,3 @@ sales-forecasting/
 ## Tools
 
 Python, Pandas, NumPy, scikit-learn, LightGBM, Matplotlib, Google Colab
-# sales-forecasting
-## Internship Details
-- **Intern ID:** CIS69
-- **Full Name:** Avni Singh
-- **No. of Weeks:** 1 Week
-- **Project Name:** Sales Forecasting with LightGBM (Rossmann Store Sales)
-- **Project Scope:** 7-day-ahead daily sales forecasting for 1,115 stores, covering data cleaning, EDA and visualization, feature engineering, model comparison and a forecast dashboard.
